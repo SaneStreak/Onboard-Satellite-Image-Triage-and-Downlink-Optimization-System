@@ -1,0 +1,47 @@
+# Simulation Environment Configuration
+simulation:
+  random_seed: 42
+  total_duration_s: 10800       # 3 hours
+  time_step_s: 10
+
+# Orbit & Ground Station Geometry
+orbit:
+  altitude_km: 500.0
+  orbital_period_s: 5700
+  passes:
+    # Constrained passes: Short windows / low bandwidth to force knapsack selection
+    - contact_id: "PASS_01_SVALBARD"
+      start_time_s: 2400
+      duration_s: 60            # 60s contact
+      data_rate_kbps: 128.0     # 128 kbps (~16 KB/s -> 960 KB total pass capacity)
+    - contact_id: "PASS_02_TROLL"
+      start_time_s: 7800
+      duration_s: 60
+      data_rate_kbps: 128.0
+
+# Onboard Sensor & Payload
+payload:
+  capture_interval_s: 15        # Capture every 15s to double ingest rate
+  daylight_duty_cycle_s: 3600
+  image_bands: 4
+  tile_dim: 384
+  webp_quality: 90
+
+# Storage & Compute Buffer Limits
+storage:
+  buffer_capacity_kb: 250.0     # 250 KB ceiling (~60-70 small tiles max)
+  max_backlog_tiles: 100
+
+# Triage & Utility Value Function Weights
+triage:
+  alpha: 1.5                    # Higher penalty for cloud coverage
+  beta: 0.5
+  decay_lambda: 0.0002
+  cloud_threshold: 0.5
+
+# Paths & Models
+paths:
+  onnx_model: "checkpoints/tiny_cloud_unet.onnx"
+  data_root: "data/raw/38-Cloud"
+  manifest_csv: "data/raw/38-Cloud/training_patches_38-cloud_nonempty.csv"
+  output_dir: "outputs/sim_runs"

@@ -1,0 +1,47 @@
+# Simulation Environment Configuration
+simulation:
+  random_seed: 42
+  total_duration_s: 10800       # 3 hours (approx 2 full LEO orbits)
+  time_step_s: 10               # Main simulation loop tick
+
+# Orbit & Ground Station Geometry (LEO 500km Sun-Synchronous)
+orbit:
+  altitude_km: 500.0
+  orbital_period_s: 5700        # ~95 minutes per revolution
+  passes:
+    # Contact pass windows: [start_time_s, duration_s]
+    - contact_id: "PASS_01_SVALBARD"
+      start_time_s: 2400
+      duration_s: 300           # 5-minute LOS window
+      data_rate_kbps: 4000.0    # 4 Mbps X-band downlink (500 KB/s)
+    - contact_id: "PASS_02_TROLL"
+      start_time_s: 7800
+      duration_s: 360           # 6-minute LOS window
+      data_rate_kbps: 4000.0
+
+# Onboard Sensor & Payload
+payload:
+  capture_interval_s: 30        # Optical acquisition every 30s during daylight
+  daylight_duty_cycle_s: 3600   # 60 minutes day, 35 minutes night eclipse per orbit
+  image_bands: 4                # Red, Green, Blue, NIR
+  tile_dim: 384                 # Spatial resolution (384x384)
+  webp_quality: 75              # Empirical compression proxy
+
+# Storage & Compute Buffer Limits
+storage:
+  buffer_capacity_kb: 4096.0    # 4.0 MB strict SRAM/RAM storage cap (~45 compressed tiles)
+  max_backlog_tiles: 100
+
+# Triage & Utility Value Function Weights
+triage:
+  alpha: 1.2                    # Utility exponent (sharp penalty for cloud coverage)
+  beta: 0.6                     # Size penalty exponent (normalizes priority per byte)
+  decay_lambda: 0.00015         # Exponential decay rate (~0.87 utility retention at 90 min)
+  cloud_threshold: 0.5          # Logit probability decision threshold
+
+# Paths & Models
+paths:
+  onnx_model: "checkpoints/tiny_cloud_unet.onnx"
+  data_root: "data/raw/38-Cloud"
+  manifest_csv: "data/raw/38-Cloud/training_patches_38-cloud_nonempty.csv"
+  output_dir: "outputs/sim_runs"
