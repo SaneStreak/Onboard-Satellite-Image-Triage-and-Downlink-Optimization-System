@@ -269,7 +269,7 @@ Bandwidth-limited regime ($\approx 25\%$ of buffer capacity deliverable per pass
 | **Delivered Clear Tiles (Cloud $\le$ 30%)** | 3 | 19 | **+533.3% (6.3x)** |
 | **Mean Ground-Truth Cloud Cover** | 57.0% | 18.6% | **-38.4% absolute (-67.4% relative)** |
 | **Transmitted Downlink Volume (MB)** | 1.57 MB | 1.83 MB | Link saturated |
-| ** Internal Objective Utility* | 3.87 | 18.72 | *+383.7% (Optimizer diagnostic score)* |
+| **Internal Objective Utility** | 3.87 | 18.72 | *+383.7% (Optimizer diagnostic score)* |
 
 **Note: Cumulative Utility is the internal objective function optimized by the pipeline. Operational validation is demonstrated through physical cloud cover reduction and clear tile delivery under identical downlink volumes.*
 
