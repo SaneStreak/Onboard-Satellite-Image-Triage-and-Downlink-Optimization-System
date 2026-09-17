@@ -27,17 +27,18 @@ payload:
   tile_dim: 384                 # Spatial resolution (384x384)
   webp_quality: 75              # Empirical compression proxy
 
-# Storage & Compute Buffer Limits
 storage:
-  buffer_capacity_kb: 4096.0    # 4.0 MB strict SRAM/RAM storage cap (~45 compressed tiles)
+  buffer_capacity_kb: 4096.0    # 4 MB (~20-30 real compressed 4-band tiles)
   max_backlog_tiles: 100
 
-# Triage & Utility Value Function Weights
 triage:
-  alpha: 1.2                    # Utility exponent (sharp penalty for cloud coverage)
-  beta: 0.6                     # Size penalty exponent (normalizes priority per byte)
-  decay_lambda: 0.00015         # Exponential decay rate (~0.87 utility retention at 90 min)
-  cloud_threshold: 0.5          # Logit probability decision threshold
+  alpha: 1.5
+  beta: 0.25                    # Dampen beta so high-entropy terrain isn't overly penalized
+  decay_lambda: 0.0001
+  cloud_threshold: 0.5
+
+downlink:
+  algorithm: "greedy"           # Options: "greedy" or "dp"
 
 # Paths & Models
 paths:

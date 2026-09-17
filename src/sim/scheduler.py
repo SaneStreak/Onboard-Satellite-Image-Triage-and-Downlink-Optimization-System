@@ -12,12 +12,14 @@ from src.sim.recorder import OnboardBufferManager
 
 
 class DownlinkScheduler:
-    def __init__(self, data_rate_kbps: float = 1000.0):
+    def __init__(self, data_rate_kbps: float = 1000.0, algorithm: str = "greedy"):
         """
         data_rate_kbps: Downlink transmission rate in kilobits per second (kbps).
         Note: 8 kilobits = 1 Kilobyte (KB).
+        algorithm: 'greedy' or 'knapsack' / 'dp'
         """
         self.data_rate_kbps = float(data_rate_kbps)
+        self.algorithm = algorithm.lower()
 
     def calculate_pass_capacity_kb(self, pass_duration_s: float) -> float:
         """
@@ -121,6 +123,19 @@ class DownlinkScheduler:
 
         return selected_ids, total_kb, total_value
 
+    def select_tiles(
+        self,
+        buffer_manager: OnboardBufferManager,
+        pass_time: float,
+        pass_duration_s: float
+    ) -> Tuple[List[str], float, float]:
+        """
+        Unified dispatch according to configured selection algorithm.
+        """
+        if self.algorithm in ("knapsack", "dp"):
+            return self.select_tiles_knapsack(buffer_manager, pass_time, pass_duration_s)
+        return self.select_tiles_greedy(buffer_manager, pass_time, pass_duration_s)
+
     def execute_downlink(
         self,
         buffer_manager: OnboardBufferManager,
@@ -136,12 +151,10 @@ class DownlinkScheduler:
 
 
 if __name__ == "__main__":
-    # Test ground contact pass: 1000 kbps (125 KB/s) for 2.0 seconds -> 250 KB capacity
-    scheduler = DownlinkScheduler(data_rate_kbps=1000.0)
+    scheduler = DownlinkScheduler(data_rate_kbps=1000.0, algorithm="greedy")
     pass_duration = 2.0
     budget_kb = scheduler.calculate_pass_capacity_kb(pass_duration)
 
-    # Initialize buffer with 4 candidate tiles of varying quality and size
     manager = OnboardBufferManager(capacity_kb=1000.0)
     manager.ingest_tile(TileMetadata("tile_A", 0.0, 0.05, 90.0, 0.95), current_time=0.0)
     manager.ingest_tile(TileMetadata("tile_B", 10.0, 0.40, 85.0, 0.60), current_time=10.0)
@@ -151,14 +164,12 @@ if __name__ == "__main__":
     sim_time = 100.0
     print(f"Pass Contact Window: {pass_duration}s | Bandwidth Ceiling: {budget_kb:.1f} KB")
 
-    # Evaluate 0/1 Knapsack
-    selected_knapsack, used_kb, total_val = scheduler.select_tiles_knapsack(manager, sim_time, pass_duration)
-    print("\nKnapsack Optimal Downlink Selection:")
-    print(f" - Selected Tiles : {selected_knapsack}")
+    selected_tiles, used_kb, total_val = scheduler.select_tiles(manager, sim_time, pass_duration)
+    print(f"\n{scheduler.algorithm.upper()} Selection:")
+    print(f" - Selected Tiles : {selected_tiles}")
     print(f" - Total Data     : {used_kb:.1f} / {budget_kb:.1f} KB")
     print(f" - Total Value    : {total_val:.6f}")
 
-    # Purge downlinked tiles from onboard storage
-    scheduler.execute_downlink(manager, selected_knapsack)
+    scheduler.execute_downlink(manager, selected_tiles)
     print(f" - Post-Downlink Buffer Usage: {manager.current_usage_kb:.1f} KB")
     print(f" - Remaining Tiles in Buffer  : {list(manager.buffer.keys())}")

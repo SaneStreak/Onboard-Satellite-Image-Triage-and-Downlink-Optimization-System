@@ -1,140 +1,133 @@
-import os
-import sys
-from typing import List, Dict, Tuple, Optional
+import numpy as np
+from typing import List, Dict, Any, Optional, Tuple
+from src.sim.pass_engine import PriorityEngine, TileMetadata
 
-# Ensure repository root is on sys.path
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
-
-from src.sim.pass_engine import TileMetadata
+# Maintain TilePayload as an alias for TileMetadata
+TilePayload = TileMetadata
 
 
-class OnboardBufferManager:
+class OnboardBuffer:
+    def __init__(self, capacity_kb: float, priority_engine: PriorityEngine):
+        self.capacity_kb = float(capacity_kb)
+        self.engine = priority_engine
+        self.storage: Dict[str, TileMetadata] = {}
+        self.current_usage_kb: float = 0.0
+
+    @property
+    def buffer(self) -> Dict[str, TileMetadata]:
+        """Provides compatibility with scheduler access."""
+        return self.storage
+
+    @property
+    def alpha(self) -> float:
+        return self.engine.alpha
+
+    @property
+    def beta(self) -> float:
+        return self.engine.beta
+
+    @property
+    def decay_lambda(self) -> float:
+        return self.engine.decay_lambda
+
+    def get_buffered_bboxes(self, exclude_id: Optional[str] = None) -> List[Tuple[float, float, float, float]]:
+        return [
+            t.bbox for tid, t in self.storage.items()
+            if exclude_id is None or tid != exclude_id
+        ]
+
+    def get_current_priorities(self, current_time_s: float) -> Dict[str, float]:
+        priorities = {}
+        all_bboxes = self.get_buffered_bboxes()
+
+        for tid, tile in self.storage.items():
+            other_bboxes = [b for b in all_bboxes if b != tile.bbox]
+            dt = current_time_s - tile.capture_time
+            p = self.engine.calculate_priority(
+                cloud_fraction=tile.cloud_fraction,
+                compressed_size_kb=tile.compressed_size_kb,
+                elapsed_time_s=dt,
+                candidate_bbox=tile.bbox,
+                buffered_bboxes=other_bboxes
+            )
+            priorities[tid] = p
+        return priorities
+
+    def admit_tile(self, tile: TileMetadata, current_time_s: float) -> bool:
+        """
+        Attempts to admit a new tile. If memory overflows, evicts the lowest marginal
+        priority tile, provided the new tile provides higher marginal value.
+        """
+        if tile.compressed_size_kb > self.capacity_kb:
+            return False
+
+        existing_bboxes = self.get_buffered_bboxes()
+        candidate_priority = self.engine.calculate_priority(
+            cloud_fraction=tile.cloud_fraction,
+            compressed_size_kb=tile.compressed_size_kb,
+            elapsed_time_s=0.0,
+            candidate_bbox=tile.bbox,
+            buffered_bboxes=existing_bboxes
+        )
+
+        needed_kb = (self.current_usage_kb + tile.compressed_size_kb) - self.capacity_kb
+
+        if needed_kb <= 0.0:
+            self.storage[tile.tile_id] = tile
+            self.current_usage_kb += tile.compressed_size_kb
+            return True
+
+        eviction_candidates = []
+        priorities = self.get_current_priorities(current_time_s)
+        sorted_tiles = sorted(self.storage.keys(), key=lambda k: priorities[k])
+
+        freed_kb = 0.0
+        for victim_id in sorted_tiles:
+            if priorities[victim_id] >= candidate_priority:
+                return False
+
+            eviction_candidates.append(victim_id)
+            freed_kb += self.storage[victim_id].compressed_size_kb
+            if freed_kb >= needed_kb:
+                break
+
+        if freed_kb < needed_kb:
+            return False
+
+        for victim_id in eviction_candidates:
+            self.current_usage_kb -= self.storage[victim_id].compressed_size_kb
+            del self.storage[victim_id]
+
+        self.storage[tile.tile_id] = tile
+        self.current_usage_kb += tile.compressed_size_kb
+        return True
+
+    def ingest_tile(self, tile: TileMetadata, current_time: float) -> bool:
+        """Alias for admit_tile to maintain simulate.py compatibility."""
+        return self.admit_tile(tile, current_time)
+
+    def remove_tiles(self, tile_ids: List[str]) -> None:
+        """Removes downlinked tiles from storage."""
+        for tid in tile_ids:
+            if tid in self.storage:
+                self.current_usage_kb -= self.storage[tid].compressed_size_kb
+                del self.storage[tid]
+
+
+class OnboardBufferManager(OnboardBuffer):
+    """Convenience wrapper accepting individual priority hyperparameters."""
     def __init__(
         self,
         capacity_kb: float,
-        alpha: float = 1.0,
-        beta: float = 0.5,
-        decay_lambda: float = 1e-4
+        alpha: float = 1.5,
+        beta: float = 0.25,
+        decay_lambda: float = 0.0001,
+        gamma_overlap: float = 0.8
     ):
-        self.capacity_kb = float(capacity_kb)
-        self.alpha = alpha
-        self.beta = beta
-        self.decay_lambda = decay_lambda
-
-        # In-memory storage: tile_id -> TileMetadata
-        self.buffer: Dict[str, TileMetadata] = {}
-        self.current_usage_kb: float = 0.0
-
-        # Telemetry audit counters
-        self.admitted_count: int = 0
-        self.rejected_count: int = 0
-        self.evicted_count: int = 0
-
-    def get_ranked_tiles(self, current_time: float) -> List[Tuple[str, float]]:
-        """
-        Returns buffered tiles sorted by priority descending: [(tile_id, priority), ...]
-        """
-        scored = [
-            (
-                t_id,
-                tile.compute_priority(
-                    current_time,
-                    alpha=self.alpha,
-                    beta=self.beta,
-                    decay_lambda=self.decay_lambda
-                )
-            )
-            for t_id, tile in self.buffer.items()
-        ]
-        scored.sort(key=lambda x: x[1], reverse=True)
-        return scored
-
-    def ingest_tile(self, tile: TileMetadata, current_time: float) -> bool:
-        """
-        Attempts to store an incoming tile.
-        Returns True if admitted (with or without evicting older tiles), False if rejected.
-        """
-        tile_size = tile.compressed_size_kb
-
-        # Edge case: Single tile exceeds total satellite capacity
-        if tile_size > self.capacity_kb:
-            self.rejected_count += 1
-            return False
-
-        # If sufficient room exists, admit immediately
-        if self.current_usage_kb + tile_size <= self.capacity_kb:
-            self.buffer[tile.tile_id] = tile
-            self.current_usage_kb += tile_size
-            self.admitted_count += 1
-            return True
-
-        # Buffer full: evaluate dynamic priority against current contents
-        candidate_priority = tile.compute_priority(
-            current_time,
-            alpha=self.alpha,
-            beta=self.beta,
-            decay_lambda=self.decay_lambda
+        engine = PriorityEngine(
+            alpha=alpha,
+            beta=beta,
+            decay_lambda=decay_lambda,
+            gamma_overlap=gamma_overlap
         )
-
-        ranked = self.get_ranked_tiles(current_time)
-        
-        # Check eviction viability: simulate dropping lowest-priority items
-        eviction_candidates = []
-        reclaimed_kb = 0.0
-        space_needed = (self.current_usage_kb + tile_size) - self.capacity_kb
-
-        # Iterate from lowest priority to highest
-        for t_id, p_score in reversed(ranked):
-            if candidate_priority <= p_score:
-                # Candidate is lower priority than remaining items; cannot justify further evictions
-                break
-
-            eviction_candidates.append(t_id)
-            reclaimed_kb += self.buffer[t_id].compressed_size_kb
-
-            if reclaimed_kb >= space_needed:
-                break
-
-        if reclaimed_kb < space_needed:
-            # Candidate tile does not possess enough relative value to displace existing tiles
-            self.rejected_count += 1
-            return False
-
-        # Execute evictions
-        for t_id in eviction_candidates:
-            self.current_usage_kb -= self.buffer[t_id].compressed_size_kb
-            del self.buffer[t_id]
-            self.evicted_count += 1
-
-        # Admit candidate
-        self.buffer[tile.tile_id] = tile
-        self.current_usage_kb += tile_size
-        self.admitted_count += 1
-        return True
-
-
-if __name__ == "__main__":
-    # Smoke test: Initialize a small 250 KB onboard buffer (~2-3 tiles capacity)
-    manager = OnboardBufferManager(capacity_kb=250.0, alpha=1.0, beta=0.5, decay_lambda=1e-3)
-
-    # Ingest Tile 1 (High clarity, captured at t=0)
-    t1 = TileMetadata("tile_001", capture_time=0.0, cloud_fraction=0.1, compressed_size_kb=90.0, base_utility=0.9)
-    manager.ingest_tile(t1, current_time=0.0)
-
-    # Ingest Tile 2 (Moderate clarity, captured at t=10)
-    t2 = TileMetadata("tile_002", capture_time=10.0, cloud_fraction=0.3, compressed_size_kb=90.0, base_utility=0.7)
-    manager.ingest_tile(t2, current_time=10.0)
-
-    # Ingest Tile 3 (High clarity, captured at t=20) -> Reaches ~270 KB, triggers eviction evaluation
-    t3 = TileMetadata("tile_003", capture_time=20.0, cloud_fraction=0.05, compressed_size_kb=90.0, base_utility=0.95)
-    admitted = manager.ingest_tile(t3, current_time=20.0)
-
-    print("Onboard Buffer Manager Operational:")
-    print(f" - Buffer Capacity  : {manager.capacity_kb:.1f} KB")
-    print(f" - Current Usage    : {manager.current_usage_kb:.1f} KB")
-    print(f" - Stored Tiles     : {list(manager.buffer.keys())}")
-    print(f" - Admitted Count   : {manager.admitted_count}")
-    print(f" - Evicted Count    : {manager.evicted_count}")
-    print(f" - Rejected Count   : {manager.rejected_count}")
+        super().__init__(capacity_kb=capacity_kb, priority_engine=engine)
