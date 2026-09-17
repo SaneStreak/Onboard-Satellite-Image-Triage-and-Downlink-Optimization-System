@@ -60,4 +60,4 @@ def test_dp_vectorized_equivalence():
 
 
 if __name__ == "__main__":
-    verify_equivalence()
+    test_dp_vectorized_equivalence()
