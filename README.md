@@ -257,7 +257,7 @@ Buffer-limited regime where each contact drains the buffer:
 | **Delivered Clear Tiles (Cloud $\le$ 30%)** | 20 | 29 | **+45.0%** |
 | **Mean Ground-Truth Cloud Cover** | 50.1% | 23.5% | **-26.6% absolute (-53.1% relative)** |
 | **Transmitted Downlink Volume (MB)** | 7.96 MB | 7.97 MB | Downlink parity (100.1%) |
-| ** Internal Objective Utility* | 23.95 | 32.90 | *+37.4% (Optimizer diagnostic score)* |
+| **Internal Objective Utility** | 23.95 | 32.90 | *+37.4% (Optimizer diagnostic score)* |
 
 #### Bottlenecked Downlink Regimes (960 KB Pass Capacity)
 
